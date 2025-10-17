@@ -1,3 +1,4 @@
+#include <asm-generic/errno-base.h>
 #include <linux/module.h>
 #include <linux/cdev.h>
 #include <linux/i2c.h>
@@ -7,12 +8,12 @@
 #include <linux/errno.h>
 #include "pcf8574.h"
 
-static const struct i2c_device_id pcf_idtable[] = {
+static const struct i2c_device_id pcf8574_idtable[] = {
     {"pcf8574", 1},
     { }
 };
 
-MODULE_DEVICE_TABLE(i2c, pcf_idtable);
+MODULE_DEVICE_TABLE(i2c, pcf8574_idtable);
 
 static struct pcf8574_dev dev;
 
@@ -32,55 +33,48 @@ static int pcf8574_open(struct inode *inode, struct file *filp){
     return 0;
 }
 
-static ssize_t pcf8574_write(struct file *filp, const char __user *buf, ssize_t count, loff_t *f_pos){
+static ssize_t pcf8574_write(struct file *filp, const char __user *buf, size_t count, loff_t *f_pos){
+    
     struct i2c_client *client = filp->private_data;
     struct pcf8574_private_data *data = i2c_get_clientdata(client);
     u16 word = 0;
-    int retval = 0;
+    int retval = -ENODEV;
     
     if (count != 2){
-        retval = -ENOMSG;
         goto err;
     }
     
-    if (copy_from_user(&word, buf, sizeof(u16))){
-        retval = -EFAULT;
+    if(copy_from_user(&word, buf, sizeof(u16))){
+        goto err;
+    }
+    
+    if (!(word & (1 << 10))){
         goto err;
     }
 
-    u8 mask = word & 0xFF;
-
-    if ((!(word & (1 << 15)) || (mask == 0 || (mask & (mask - 1)) != 0))){ // reject read request and make sure only 1 pin is requested for update
-        retval = -EINVAL;
+    u8 mask = (word & 0xFF);
+     
+    if (mask == 0 || (mask & (mask - 1)) != 0){ 
         goto err;
     }
-
-    if (word & (1 << 14)){ // whether it should update p_state or p_dir
-        
-        if (word & (1 << 13)){ //whether pin should be turned on or off
-            data->p_state |= (mask);
-        }
-
-        else{
-            data->p_state &= ~(mask);
-        }
-
-        retval = i2c_master_send(client, &data->p_state, sizeof(data->p_state));
+    
+    u8 *ptr = (word & (1 << 9) ? &data->p_state : &data->p_dir); 
+    
+    if (word & (1 << 8)){
+        *ptr |= mask;
     }
     else{
-        if (word & (1 << 13)){
-            data->p_dir |= mask;
-        }
-        else{
-            data->p_dir &= ~(mask);
-        }
+        *ptr &= ~(mask);
     }
-    
-    if (retval < 0){
-        goto err;
-    }
-    retval = count;
 
+    if (word & (1 << 9)){
+        retval = i2c_master_send(client, ptr, sizeof(u8));
+        if (retval < 0){
+            goto err;
+        }
+    }
+
+    retval = count;
 err:
     return retval;
 }
@@ -126,9 +120,9 @@ static int __init pcf8574_init(void){
     }
     dev.driver.driver.name = "pcf8574";
     dev.driver.driver.owner = THIS_MODULE;
-    dev.driver.id_table = pcf_idtable;
-    dev.driver.probe = pcf_probe;
-    dev.driver.remove = pcf_remove;
+    dev.driver.id_table = pcf8574_idtable;
+    dev.driver.probe = pcf8574_probe;
+    dev.driver.remove = pcf8574_remove;
 
     retval = i2c_add_driver(&dev.driver);
 
