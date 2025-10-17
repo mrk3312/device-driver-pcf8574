@@ -37,37 +37,33 @@ static ssize_t pcf8574_write(struct file *filp, const char __user *buf, size_t c
     
     struct i2c_client *client = filp->private_data;
     struct pcf8574_private_data *data = i2c_get_clientdata(client);
-    u16 word = 0;
+    u8 byte = 0;
     int retval = -ENODEV;
     
-    if (count != 2){
+    if (count != 1){
         goto err;
     }
     
-    if(copy_from_user(&word, buf, sizeof(u16))){
+    if(copy_from_user(&byte, buf, sizeof(u8))){
         goto err;
     }
     
-    if (!(word & (1 << 10))){
-        goto err;
-    }
-
-    u8 mask = (word & 0xFF);
-     
-    if (mask == 0 || (mask & (mask - 1)) != 0){ 
+    if (!(byte & (1 << 5))){
         goto err;
     }
     
-    u8 *ptr = (word & (1 << 9) ? &data->p_state : &data->p_dir); 
+    u8 *ptr = (byte & (1 << 4) ? &data->p_state : &data->p_dir); 
     
-    if (word & (1 << 8)){
-        *ptr |= mask;
+    u8 pin_n = byte & 0x7;
+    
+    if (byte & (1 << 3)){
+        *ptr |= (1 << pin_n);
     }
     else{
-        *ptr &= ~(mask);
+        *ptr &= ~(1 << pin_n);
     }
 
-    if (word & (1 << 9)){
+    if (byte & (1 << 4)){
         retval = i2c_master_send(client, ptr, sizeof(u8));
         if (retval < 0){
             goto err;
