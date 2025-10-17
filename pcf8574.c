@@ -4,6 +4,7 @@
 #include <linux/kernel.h>
 #include <linux/fcntl.h>
 #include <linux/fs.h>
+#include <linux/errno.h>
 #include "pcf8574.h"
 
 static const struct i2c_device_id pcf_idtable[] = {
@@ -15,13 +16,13 @@ MODULE_DEVICE_TABLE(i2c, pcf_idtable);
 
 static struct pcf8574_dev dev;
 
-static int pcf_probe(struct i2c_client *client){
+static int pcf8574_probe(struct i2c_client *client){
     dev.slave = client;
     i2c_set_clientdata(client, &dev.data);
     return 0;
 }
 
-static void pcf_remove(struct i2c_client *client){
+static void pcf8574_remove(struct i2c_client *client){
     
 }
 
@@ -31,10 +32,63 @@ static int pcf8574_open(struct inode *inode, struct file *filp){
     return 0;
 }
 
+static ssize_t pcf8574_write(struct file *filp, const char __user *buf, ssize_t count, loff_t *f_pos){
+    struct i2c_client *client = filp->private_data;
+    struct pcf8574_private_data *data = i2c_get_clientdata(client);
+    u16 word = 0;
+    int retval = 0;
+    
+    if (count != 2){
+        retval = -ENOMSG;
+        goto err;
+    }
+    
+    if (copy_from_user(&word, buf, sizeof(u16))){
+        retval = -EFAULT;
+        goto err;
+    }
+
+    u8 mask = word & 0xFF;
+
+    if ((!(word & (1 << 15)) || (mask == 0 || (mask & (mask - 1)) != 0))){ // reject read request and make sure only 1 pin is requested for update
+        retval = -EINVAL;
+        goto err;
+    }
+
+    if (word & (1 << 14)){ // whether it should update p_state or p_dir
+        
+        if (word & (1 << 13)){ //whether pin should be turned on or off
+            data->p_state |= (mask);
+        }
+
+        else{
+            data->p_state &= ~(mask);
+        }
+
+        retval = i2c_master_send(client, &data->p_state, sizeof(data->p_state));
+    }
+    else{
+        if (word & (1 << 13)){
+            data->p_dir |= mask;
+        }
+        else{
+            data->p_dir &= ~(mask);
+        }
+    }
+    
+    if (retval < 0){
+        goto err;
+    }
+    retval = count;
+
+err:
+    return retval;
+}
+
 static struct file_operations pcf8574_fops = {
     .owner = THIS_MODULE,
     .open = pcf8574_open,
-    //.write = pcf8574_write,
+    .write = pcf8574_write,
     //.read = pcf8574_read,
     //.ioctl = pcf8574_ioctl,
     //.release = pcf8574_release
