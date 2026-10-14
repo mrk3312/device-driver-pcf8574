@@ -12,3 +12,4 @@
 *.mod.cmd
 *.mod.o.cmd
 *o.cmd
+/.vscode
